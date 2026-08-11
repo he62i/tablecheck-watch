@@ -1,18 +1,21 @@
 name: サッポロビール園 開拓使館 空席監視
 
+# GitHub の無料枠では高頻度の cron が大幅に間引かれ、実測で 2〜3 時間に 1 回しか
+# 発火しなかった。そこで「1回のジョブを約5時間常駐させ、その中で3分ごとに
+# チェックする」方式にしている。cron はジョブを繋ぎ直すためのトリガーに過ぎない。
 on:
   schedule:
-    # 15分ごとの空席チェック（cronはUTC基準だが、間隔なので時差は無関係）
     - cron: "*/15 * * * *"
     # 毎週月曜 00:00 UTC = 月曜 09:00 JST に稼働確認メールを送る
     - cron: "0 0 * * 1"
-  workflow_dispatch:        # Actions タブから手動実行できるようにする
+  workflow_dispatch:        # 手動実行。この場合は1回だけチェックして終了する
 
-# Issue を立てるために必要
 permissions:
   contents: read
   issues: write
 
+# 常駐ジョブが走っている間、後続のトリガーは待機列に入り、終わり次第すぐ始まる。
+# これで実質的に切れ目のない監視になる。
 concurrency:
   group: tablecheck-watch
   cancel-in-progress: false
@@ -20,7 +23,7 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 330
     steps:
       - uses: actions/checkout@v4
 
@@ -28,18 +31,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: 空席チェック
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # 以下は「GitHubのIssue通知メールではなく、直接メールを送りたい」場合のみ設定
-          SMTP_HOST: ${{ secrets.SMTP_HOST }}
-          SMTP_PORT: ${{ secrets.SMTP_PORT }}
-          SMTP_USER: ${{ secrets.SMTP_USER }}
-          SMTP_PASS: ${{ secrets.SMTP_PASS }}
-          MAIL_TO: ${{ secrets.MAIL_TO }}
-        run: python check_availability.py
-
-      # 週1回だけ「動いてます」を知らせる。専用Issueにコメントを足すのでメールが届く。
+      # 週1回の稼働確認。常駐ループの前に置いて、遅延なく届くようにする。
       - name: 稼働確認（毎週月曜 09:00 JST）
         if: ${{ github.event.schedule == '0 0 * * 1' }}
         env:
@@ -53,4 +45,46 @@ jobs:
             gh issue create --title "$TITLE" --body "$BODY"
           else
             gh issue comment "$NUM" --body "$BODY"
+          fi
+
+      - name: 空席チェック（約5時間・3分間隔）
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 以下は「GitHubのIssue通知メールではなく、直接メールを送りたい」場合のみ設定
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
+        run: |
+          set -u
+          # ループ中に毎回サマリーを書くと肥大化するので、Python 側には渡さない
+          SUMMARY="${GITHUB_STEP_SUMMARY:-}"
+          unset GITHUB_STEP_SUMMARY
+
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            DURATION=$((5 * 3600))   # 定期実行なら約5時間常駐
+          else
+            DURATION=0                # 手動実行なら1回だけ
+          fi
+          INTERVAL=180
+          END=$(( $(date +%s) + DURATION ))
+          COUNT=0
+
+          while : ; do
+            COUNT=$((COUNT + 1))
+            python check_availability.py || true
+            NOW=$(date +%s)
+            [ "$NOW" -ge "$END" ] && break
+            REMAIN=$(( END - NOW ))
+            [ "$REMAIN" -lt "$INTERVAL" ] && SLEEP="$REMAIN" || SLEEP="$INTERVAL"
+            sleep "$SLEEP"
+          done
+
+          if [ -n "$SUMMARY" ]; then
+            echo "### 監視完了" >> "$SUMMARY"
+            echo "" >> "$SUMMARY"
+            echo "$(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M') JST 終了 / ${COUNT} 回チェック / 間隔 ${INTERVAL} 秒" >> "$SUMMARY"
+            echo "" >> "$SUMMARY"
+            echo "空きを検知した場合は Issue が作成され、メールが届きます。" >> "$SUMMARY"
           fi
