@@ -1,0 +1,38 @@
+name: サッポロビール園 開拓使館 空席監視
+
+on:
+  schedule:
+    # 15分ごと（UTC基準だが間隔なので時差は無関係）
+    - cron: "*/15 * * * *"
+  workflow_dispatch:        # Actions タブから手動実行できるようにする
+
+# Issue を立てるために必要
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: tablecheck-watch
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 空席チェック
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 以下は「GitHubのIssue通知メールではなく、直接メールを送りたい」場合のみ設定
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
+        run: python check_availability.py
