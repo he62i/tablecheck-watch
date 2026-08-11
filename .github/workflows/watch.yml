@@ -2,8 +2,10 @@ name: サッポロビール園 開拓使館 空席監視
 
 on:
   schedule:
-    # 15分ごと（UTC基準だが間隔なので時差は無関係）
+    # 15分ごとの空席チェック（cronはUTC基準だが、間隔なので時差は無関係）
     - cron: "*/15 * * * *"
+    # 毎週月曜 00:00 UTC = 月曜 09:00 JST に稼働確認メールを送る
+    - cron: "0 0 * * 1"
   workflow_dispatch:        # Actions タブから手動実行できるようにする
 
 # Issue を立てるために必要
@@ -36,3 +38,19 @@ jobs:
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           MAIL_TO: ${{ secrets.MAIL_TO }}
         run: python check_availability.py
+
+      # 週1回だけ「動いてます」を知らせる。専用Issueにコメントを足すのでメールが届く。
+      - name: 稼働確認（毎週月曜 09:00 JST）
+        if: ${{ github.event.schedule == '0 0 * * 1' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TITLE="稼働ログ: サッポロビール園 開拓使館 空席監視"
+          NOW=$(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M')
+          BODY="監視は稼働中です（${NOW} JST 時点）。この1週間、2026-09-20 の 17:30〜19:00 に空きは出ていません。空きが出た場合は別のIssueでお知らせします。"
+          NUM=$(gh issue list --state open --search "in:title 稼働ログ" --json number --jq '.[0].number // empty')
+          if [ -z "$NUM" ]; then
+            gh issue create --title "$TITLE" --body "$BODY"
+          else
+            gh issue comment "$NUM" --body "$BODY"
+          fi
