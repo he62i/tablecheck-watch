@@ -31,8 +31,8 @@ SHOP_ID = "sapporobiergarten-kaitakushikan"
 SHOP_NAME = "サッポロビール園 開拓使館"
 
 TARGET_DATE = "2026-09-20"                     # 監視したい日 (YYYY-MM-DD)
-TARGET_TIMES = [                               # 【一時的なテスト設定】通知経路の確認用
-    "15:30",
+TARGET_TIMES = [                               # 監視したい開始時刻
+    "17:30", "17:45", "18:00", "18:15", "18:30", "18:45", "19:00",
 ]
 
 # 大人2・子供1・幼児1 = 合計4名。
